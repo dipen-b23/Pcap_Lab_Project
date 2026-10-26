@@ -1,0 +1,19 @@
+Start testing: Oct 15 16:44 India Standard Time
+----------------------------------------------------------
+1/1 Testing: core
+1/1 Test: core
+Command: "C:/Users/shreyaj/Documents/pcap project/parallel-image-denoising/build-verified/test_core.exe"
+Directory: C:/Users/shreyaj/Documents/pcap project/parallel-image-denoising/build-verified
+"core" start time: Oct 15 16:44 India Standard Time
+Output:
+----------------------------------------------------------
+all C tests passed
+<end of output>
+Test time =   0.11 sec
+----------------------------------------------------------
+Test Passed.
+"core" end time: Oct 15 16:44 India Standard Time
+"core" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Oct 15 16:44 India Standard Time
