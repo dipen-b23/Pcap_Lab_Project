@@ -1,6 +1,6 @@
 # Detected Environment
 
-Audit date: 2026-10-15.
+Audit date: October 15, 2026. This report describes the recorded Windows environment; it is not a live capability report for other machines.
 
 | Component | Detected value | Status |
 |---|---|---|
@@ -19,6 +19,6 @@ Audit date: 2026-10-15.
 
 The original MinGW OpenMP installation lacked `libpthread.a`; `mingw-get install mingw32-pthreads-w32-dev` repaired linking. The old `mingw32-make` also failed in this space-containing workspace, so verified builds use Ninja.
 
-Serial and OpenMP are **available and executable**. MPI, CUDA, and hybrid are **unavailable because dependencies/hardware are missing**, not failed executions. Their source was not compiled or executed here and is marked **NOT VERIFIED ON THIS MACHINE**.
+Serial and OpenMP were **available and executable** during the audit. MPI, CUDA, and hybrid were **unavailable because dependencies/hardware were missing**, not failed executions. Their source was not compiled or executed here and is marked **NOT VERIFIED ON THIS MACHINE**.
 
 For MPI on Windows, install both Microsoft MPI runtime and SDK, open a fresh shell, and verify `mpiexec` plus MPI headers/libraries before reconfiguring. For CUDA, install a Toolkit version supporting the installed NVIDIA driver and a compatible Visual Studio/MSVC host compiler. MinGW GCC 6.3 is not presented as a CUDA-compatible host toolchain.

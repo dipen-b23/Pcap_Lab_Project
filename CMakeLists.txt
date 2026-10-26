@@ -9,8 +9,13 @@ option(ENABLE_MPI "Build MPI executable" ON)
 option(ENABLE_CUDA "Build CUDA and hybrid executables" OFF)
 include(CTest)
 
-add_library(denoise_core src/image.c src/noise.c src/metrics.c src/timing.c
-    src/serial/bilateral_serial.c)
+add_library(denoise_core
+    src/image.c
+    src/noise.c
+    src/metrics.c
+    src/timing.c
+    src/serial/bilateral_serial.c
+)
 target_include_directories(denoise_core PUBLIC include)
 if(NOT MSVC)
     target_link_libraries(denoise_core PUBLIC m)
@@ -77,4 +82,5 @@ target_include_directories(denoise PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generate
 if(TARGET denoise_cuda)
     target_include_directories(denoise_cuda PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 endif()
-message(STATUS "Capabilities: OpenMP=${HAVE_OPENMP}, MPI=${HAVE_MPI}, CUDA requested=${ENABLE_CUDA}")
+message(
+    STATUS "Capabilities: OpenMP=${HAVE_OPENMP}, MPI=${HAVE_MPI}, CUDA requested=${ENABLE_CUDA}")

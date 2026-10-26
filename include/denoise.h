@@ -9,12 +9,22 @@ extern "C" {
 #endif
 
 enum DenoiseStatus {
-    DENOISE_OK = 0, DENOISE_INVALID = 2, DENOISE_ALLOC = 3,
-    DENOISE_IO = 4, DENOISE_UNAVAILABLE = 5, DENOISE_RUNTIME = 6
+    DENOISE_OK = 0,
+    DENOISE_INVALID = 2,
+    DENOISE_ALLOC = 3,
+    DENOISE_IO = 4,
+    DENOISE_UNAVAILABLE = 5,
+    DENOISE_RUNTIME = 6
 };
 
-typedef struct { size_t width, height, count; float *pixels; } Image;
-typedef struct { int window_size; float sigma_spatial, sigma_range; } BilateralConfig;
+typedef struct {
+    size_t width, height, count;
+    float *pixels;
+} Image;
+typedef struct {
+    int window_size;
+    float sigma_spatial, sigma_range;
+} BilateralConfig;
 typedef struct {
     double wall_ms, kernel_ms, h2d_ms, d2h_ms, communication_ms;
     double distribution_ms, halo_ms, gather_ms;
@@ -24,7 +34,9 @@ typedef struct {
     double within_tolerance_percent, exact_u8_percent;
     int passed;
 } ValidationResult;
-typedef struct { double mse, psnr; } QualityMetrics;
+typedef struct {
+    double mse, psnr;
+} QualityMetrics;
 
 int image_alloc(Image *image, size_t width, size_t height);
 void image_free(Image *image);

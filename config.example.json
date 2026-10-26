@@ -1,1 +1,13 @@
-{"mode":"openmp","width":512,"height":512,"window":9,"sigma_spatial":3.0,"sigma_range":25.0,"noise_sigma":25.0,"seed":42,"threads":4,"cpu_percent":25,"repetitions":5}
+{
+  "mode": "openmp",
+  "width": 512,
+  "height": 512,
+  "window": 9,
+  "sigma_spatial": 3.0,
+  "sigma_range": 25.0,
+  "noise_sigma": 25.0,
+  "seed": 42,
+  "threads": 4,
+  "cpu_percent": 25,
+  "repetitions": 5
+}

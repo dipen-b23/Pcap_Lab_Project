@@ -6,25 +6,215 @@
 #include <string.h>
 
 /* Rows are scattered, then only requested halo rows are exchanged with their owner. */
-static int owner_of(int row,const int*rows,const int*starts,int n){for(int p=0;p<n;++p)if(row>=starts[p]&&row<starts[p]+rows[p])return p;return n-1;}
-int main(int argc,char**argv){int rank,n,width=0,height=0,status=0,window=9;float ss=3,sr=25,noise_sigma=25;unsigned long long seed=42;Image clean={0},full={0},output={0};int *rows=NULL,*starts=NULL,*counts=NULL,*displs=NULL;float *local=NULL,*local_out=NULL,*halo_values=NULL;int *send_n=NULL,*recv_n=NULL,*send_d=NULL,*recv_d=NULL,*requests=NULL,*incoming=NULL,*halo_rows=NULL;double begin,scatter_end,compute_end,gather_end,max_total;
- MPI_Init(&argc,&argv);MPI_Comm_rank(MPI_COMM_WORLD,&rank);MPI_Comm_size(MPI_COMM_WORLD,&n);
- if(rank==0){if(argc<3){fprintf(stderr,"Usage: denoise_mpi clean_input.pnm output.pgm [window sigma_spatial sigma_range noise_sigma seed]\n");status=DENOISE_INVALID;}else{if(argc>3)window=atoi(argv[3]);if(argc>4)ss=(float)atof(argv[4]);if(argc>5)sr=(float)atof(argv[5]);if(argc>6)noise_sigma=(float)atof(argv[6]);if(argc>7)seed=strtoull(argv[7],NULL,10);status=image_load_pnm(argv[1],&clean);if(!status)status=image_add_gaussian_noise(&clean,&full,noise_sigma,(uint64_t)seed);width=(int)full.width;height=(int)full.height;}}
- MPI_Bcast(&status,1,MPI_INT,0,MPI_COMM_WORLD);if(status){MPI_Finalize();return status;}MPI_Bcast(&width,1,MPI_INT,0,MPI_COMM_WORLD);MPI_Bcast(&height,1,MPI_INT,0,MPI_COMM_WORLD);MPI_Bcast(&window,1,MPI_INT,0,MPI_COMM_WORLD);MPI_Bcast(&ss,1,MPI_FLOAT,0,MPI_COMM_WORLD);MPI_Bcast(&sr,1,MPI_FLOAT,0,MPI_COMM_WORLD);
- rows=(int*)malloc((size_t)n*sizeof(int));starts=(int*)malloc((size_t)n*sizeof(int));counts=(int*)malloc((size_t)n*sizeof(int));displs=(int*)malloc((size_t)n*sizeof(int));
- for(int p=0,at=0;p<n;++p){rows[p]=height/n+(p<height%n);starts[p]=at;counts[p]=rows[p]*width;displs[p]=at*width;at+=rows[p];}
- local=(float*)malloc((size_t)(counts[rank]?counts[rank]:1)*sizeof(float));local_out=(float*)malloc((size_t)(counts[rank]?counts[rank]:1)*sizeof(float));send_n=(int*)calloc((size_t)n,sizeof(int));recv_n=(int*)calloc((size_t)n,sizeof(int));send_d=(int*)calloc((size_t)n,sizeof(int));recv_d=(int*)calloc((size_t)n,sizeof(int));if(!rows||!starts||!counts||!displs||!local||!local_out||!send_n||!recv_n||!send_d||!recv_d)MPI_Abort(MPI_COMM_WORLD,DENOISE_ALLOC);
- MPI_Barrier(MPI_COMM_WORLD);begin=MPI_Wtime();MPI_Scatterv(rank==0?full.pixels:NULL,counts,displs,MPI_FLOAT,local,counts[rank],MPI_FLOAT,0,MPI_COMM_WORLD);scatter_end=MPI_Wtime();
- /* Request exactly the non-local rows in this rank's radius, then return row payloads. */
- int radius=window/2,needed=0;if(rows[rank]){int lo=starts[rank]-radius,hi=starts[rank]+rows[rank]+radius;if(lo<0)lo=0;if(hi>height)hi=height;for(int y=lo;y<hi;++y)if(y<starts[rank]||y>=starts[rank]+rows[rank]){++send_n[owner_of(y,rows,starts,n)];++needed;}}
- for(int p=1;p<n;++p)send_d[p]=send_d[p-1]+send_n[p-1];requests=(int*)malloc((size_t)(needed?needed:1)*sizeof(int));halo_rows=(int*)malloc((size_t)(needed?needed:1)*sizeof(int));int *cursor=(int*)malloc((size_t)n*sizeof(int));memcpy(cursor,send_d,(size_t)n*sizeof(int));
- if(rows[rank]){int lo=starts[rank]-radius,hi=starts[rank]+rows[rank]+radius;if(lo<0)lo=0;if(hi>height)hi=height;for(int y=lo;y<hi;++y)if(y<starts[rank]||y>=starts[rank]+rows[rank]){int p=owner_of(y,rows,starts,n);requests[cursor[p]++]=y;}}memcpy(halo_rows,requests,(size_t)needed*sizeof(int));free(cursor);
- MPI_Alltoall(send_n,1,MPI_INT,recv_n,1,MPI_INT,MPI_COMM_WORLD);int incoming_n=0;for(int p=1;p<n;++p)recv_d[p]=recv_d[p-1]+recv_n[p-1];for(int p=0;p<n;++p)incoming_n+=recv_n[p];incoming=(int*)malloc((size_t)(incoming_n?incoming_n:1)*sizeof(int));
- MPI_Alltoallv(requests,send_n,send_d,MPI_INT,incoming,recv_n,recv_d,MPI_INT,MPI_COMM_WORLD);
- int *response_n=(int*)malloc((size_t)n*sizeof(int)),*response_d=(int*)malloc((size_t)n*sizeof(int)),*halo_n=(int*)malloc((size_t)n*sizeof(int)),*halo_d=(int*)malloc((size_t)n*sizeof(int));float *responses=(float*)malloc((size_t)(incoming_n*width?incoming_n*width:1)*sizeof(float));halo_values=(float*)malloc((size_t)(needed*width?needed*width:1)*sizeof(float));
- for(int p=0;p<n;++p){response_n[p]=recv_n[p]*width;response_d[p]=recv_d[p]*width;halo_n[p]=send_n[p]*width;halo_d[p]=send_d[p]*width;}for(int i=0;i<incoming_n;++i)memcpy(responses+(size_t)i*width,local+(size_t)(incoming[i]-starts[rank])*width,(size_t)width*sizeof(float));
- MPI_Alltoallv(responses,response_n,response_d,MPI_FLOAT,halo_values,halo_n,halo_d,MPI_FLOAT,MPI_COMM_WORLD);
- for(int ly=0;ly<rows[rank];++ly){int y=starts[rank]+ly;for(int x=0;x<width;++x){float center=local[ly*width+x],sum=0,ws=0;for(int dy=-radius;dy<=radius;++dy)for(int dx=-radius;dx<=radius;++dx){int yy=y+dy,xx=x+dx;if(yy<0)yy=0;if(yy>=height)yy=height-1;if(xx<0)xx=0;if(xx>=width)xx=width-1;float *row=NULL;if(yy>=starts[rank]&&yy<starts[rank]+rows[rank])row=local+(size_t)(yy-starts[rank])*width;else for(int i=0;i<needed;++i)if(halo_rows[i]==yy){row=halo_values+(size_t)i*width;break;}float v=row?row[xx]:center,d=center-v,w=expf(-(float)(dx*dx+dy*dy)/(2*ss*ss))*expf(-(d*d)/(2*sr*sr));sum+=w*v;ws+=w;}local_out[ly*width+x]=ws>0?sum/ws:center;}}
- compute_end=MPI_Wtime();if(rank==0)image_alloc(&output,(size_t)width,(size_t)height);MPI_Gatherv(local_out,counts[rank],MPI_FLOAT,rank==0?output.pixels:NULL,counts,displs,MPI_FLOAT,0,MPI_COMM_WORLD);gather_end=MPI_Wtime();double total=(gather_end-begin)*1000;MPI_Reduce(&total,&max_total,1,MPI_DOUBLE,MPI_MAX,0,MPI_COMM_WORLD);
- if(rank==0){status=image_save_pgm(argv[2],&output);printf("{\"status\":\"%s\",\"mode\":\"mpi\",\"processes\":%d,\"wall_ms\":%.6f,\"distribution_ms\":%.6f,\"compute_and_halo_ms\":%.6f,\"gather_ms\":%.6f}\n",status?"error":"ok",n,max_total,(scatter_end-begin)*1000,(compute_end-scatter_end)*1000,(gather_end-compute_end)*1000);}
- free(rows);free(starts);free(counts);free(displs);free(local);free(local_out);free(send_n);free(recv_n);free(send_d);free(recv_d);free(requests);free(incoming);free(halo_rows);free(halo_values);free(response_n);free(response_d);free(halo_n);free(halo_d);free(responses);image_free(&clean);image_free(&full);image_free(&output);MPI_Finalize();return status;}
+static int owner_of(int row, const int *rows, const int *starts, int n) {
+    for (int p = 0; p < n; ++p)
+        if (row >= starts[p] && row < starts[p] + rows[p])
+            return p;
+    return n - 1;
+}
+int main(int argc, char **argv) {
+    int rank, n, width = 0, height = 0, status = 0, window = 9;
+    float ss = 3, sr = 25, noise_sigma = 25;
+    unsigned long long seed = 42;
+    Image clean = {0}, full = {0}, output = {0};
+    int *rows = NULL, *starts = NULL, *counts = NULL, *displs = NULL;
+    float *local = NULL, *local_out = NULL, *halo_values = NULL;
+    int *send_n = NULL, *recv_n = NULL, *send_d = NULL, *recv_d = NULL, *requests = NULL,
+        *incoming = NULL, *halo_rows = NULL;
+    double begin, scatter_end, compute_end, gather_end, max_total;
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &n);
+    if (rank == 0) {
+        if (argc < 3) {
+            fprintf(
+                stderr,
+                "Usage: denoise_mpi clean_input.pnm output.pgm [window sigma_spatial sigma_range noise_sigma seed]\n");
+            status = DENOISE_INVALID;
+        } else {
+            if (argc > 3)
+                window = atoi(argv[3]);
+            if (argc > 4)
+                ss = (float)atof(argv[4]);
+            if (argc > 5)
+                sr = (float)atof(argv[5]);
+            if (argc > 6)
+                noise_sigma = (float)atof(argv[6]);
+            if (argc > 7)
+                seed = strtoull(argv[7], NULL, 10);
+            status = image_load_pnm(argv[1], &clean);
+            if (!status)
+                status = image_add_gaussian_noise(&clean, &full, noise_sigma, (uint64_t)seed);
+            width = (int)full.width;
+            height = (int)full.height;
+        }
+    }
+    MPI_Bcast(&status, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    if (status) {
+        MPI_Finalize();
+        return status;
+    }
+    MPI_Bcast(&width, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&height, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&window, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&ss, 1, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&sr, 1, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    rows = (int *)malloc((size_t)n * sizeof(int));
+    starts = (int *)malloc((size_t)n * sizeof(int));
+    counts = (int *)malloc((size_t)n * sizeof(int));
+    displs = (int *)malloc((size_t)n * sizeof(int));
+    for (int p = 0, at = 0; p < n; ++p) {
+        rows[p] = height / n + (p < height % n);
+        starts[p] = at;
+        counts[p] = rows[p] * width;
+        displs[p] = at * width;
+        at += rows[p];
+    }
+    local = (float *)malloc((size_t)(counts[rank] ? counts[rank] : 1) * sizeof(float));
+    local_out = (float *)malloc((size_t)(counts[rank] ? counts[rank] : 1) * sizeof(float));
+    send_n = (int *)calloc((size_t)n, sizeof(int));
+    recv_n = (int *)calloc((size_t)n, sizeof(int));
+    send_d = (int *)calloc((size_t)n, sizeof(int));
+    recv_d = (int *)calloc((size_t)n, sizeof(int));
+    if (!rows || !starts || !counts || !displs || !local || !local_out || !send_n || !recv_n ||
+        !send_d || !recv_d)
+        MPI_Abort(MPI_COMM_WORLD, DENOISE_ALLOC);
+    MPI_Barrier(MPI_COMM_WORLD);
+    begin = MPI_Wtime();
+    MPI_Scatterv(rank == 0 ? full.pixels : NULL, counts, displs, MPI_FLOAT, local, counts[rank],
+                 MPI_FLOAT, 0, MPI_COMM_WORLD);
+    scatter_end = MPI_Wtime();
+    /* Request exactly the non-local rows in this rank's radius, then return row payloads. */
+    int radius = window / 2, needed = 0;
+    if (rows[rank]) {
+        int lo = starts[rank] - radius, hi = starts[rank] + rows[rank] + radius;
+        if (lo < 0)
+            lo = 0;
+        if (hi > height)
+            hi = height;
+        for (int y = lo; y < hi; ++y)
+            if (y < starts[rank] || y >= starts[rank] + rows[rank]) {
+                ++send_n[owner_of(y, rows, starts, n)];
+                ++needed;
+            }
+    }
+    for (int p = 1; p < n; ++p)
+        send_d[p] = send_d[p - 1] + send_n[p - 1];
+    requests = (int *)malloc((size_t)(needed ? needed : 1) * sizeof(int));
+    halo_rows = (int *)malloc((size_t)(needed ? needed : 1) * sizeof(int));
+    int *cursor = (int *)malloc((size_t)n * sizeof(int));
+    memcpy(cursor, send_d, (size_t)n * sizeof(int));
+    if (rows[rank]) {
+        int lo = starts[rank] - radius, hi = starts[rank] + rows[rank] + radius;
+        if (lo < 0)
+            lo = 0;
+        if (hi > height)
+            hi = height;
+        for (int y = lo; y < hi; ++y)
+            if (y < starts[rank] || y >= starts[rank] + rows[rank]) {
+                int p = owner_of(y, rows, starts, n);
+                requests[cursor[p]++] = y;
+            }
+    }
+    memcpy(halo_rows, requests, (size_t)needed * sizeof(int));
+    free(cursor);
+    MPI_Alltoall(send_n, 1, MPI_INT, recv_n, 1, MPI_INT, MPI_COMM_WORLD);
+    int incoming_n = 0;
+    for (int p = 1; p < n; ++p)
+        recv_d[p] = recv_d[p - 1] + recv_n[p - 1];
+    for (int p = 0; p < n; ++p)
+        incoming_n += recv_n[p];
+    incoming = (int *)malloc((size_t)(incoming_n ? incoming_n : 1) * sizeof(int));
+    MPI_Alltoallv(requests, send_n, send_d, MPI_INT, incoming, recv_n, recv_d, MPI_INT,
+                  MPI_COMM_WORLD);
+    int *response_n = (int *)malloc((size_t)n * sizeof(int)),
+        *response_d = (int *)malloc((size_t)n * sizeof(int)),
+        *halo_n = (int *)malloc((size_t)n * sizeof(int)),
+        *halo_d = (int *)malloc((size_t)n * sizeof(int));
+    float *responses =
+        (float *)malloc((size_t)(incoming_n * width ? incoming_n * width : 1) * sizeof(float));
+    halo_values = (float *)malloc((size_t)(needed * width ? needed * width : 1) * sizeof(float));
+    for (int p = 0; p < n; ++p) {
+        response_n[p] = recv_n[p] * width;
+        response_d[p] = recv_d[p] * width;
+        halo_n[p] = send_n[p] * width;
+        halo_d[p] = send_d[p] * width;
+    }
+    for (int i = 0; i < incoming_n; ++i)
+        memcpy(responses + (size_t)i * width, local + (size_t)(incoming[i] - starts[rank]) * width,
+               (size_t)width * sizeof(float));
+    MPI_Alltoallv(responses, response_n, response_d, MPI_FLOAT, halo_values, halo_n, halo_d,
+                  MPI_FLOAT, MPI_COMM_WORLD);
+    for (int ly = 0; ly < rows[rank]; ++ly) {
+        int y = starts[rank] + ly;
+        for (int x = 0; x < width; ++x) {
+            float center = local[ly * width + x], sum = 0, ws = 0;
+            for (int dy = -radius; dy <= radius; ++dy)
+                for (int dx = -radius; dx <= radius; ++dx) {
+                    int yy = y + dy, xx = x + dx;
+                    if (yy < 0)
+                        yy = 0;
+                    if (yy >= height)
+                        yy = height - 1;
+                    if (xx < 0)
+                        xx = 0;
+                    if (xx >= width)
+                        xx = width - 1;
+                    float *row = NULL;
+                    if (yy >= starts[rank] && yy < starts[rank] + rows[rank])
+                        row = local + (size_t)(yy - starts[rank]) * width;
+                    else
+                        for (int i = 0; i < needed; ++i)
+                            if (halo_rows[i] == yy) {
+                                row = halo_values + (size_t)i * width;
+                                break;
+                            }
+                    float v = row ? row[xx] : center, d = center - v,
+                          w = expf(-(float)(dx * dx + dy * dy) / (2 * ss * ss)) *
+                              expf(-(d * d) / (2 * sr * sr));
+                    sum += w * v;
+                    ws += w;
+                }
+            local_out[ly * width + x] = ws > 0 ? sum / ws : center;
+        }
+    }
+    compute_end = MPI_Wtime();
+    if (rank == 0)
+        image_alloc(&output, (size_t)width, (size_t)height);
+    MPI_Gatherv(local_out, counts[rank], MPI_FLOAT, rank == 0 ? output.pixels : NULL, counts,
+                displs, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    gather_end = MPI_Wtime();
+    double total = (gather_end - begin) * 1000;
+    MPI_Reduce(&total, &max_total, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    if (rank == 0) {
+        status = image_save_pgm(argv[2], &output);
+        printf(
+            "{\"status\":\"%s\",\"mode\":\"mpi\",\"processes\":%d,\"wall_ms\":%.6f,\"distribution_ms\":%.6f,\"compute_and_halo_ms\":%.6f,\"gather_ms\":%.6f}\n",
+            status ? "error" : "ok", n, max_total, (scatter_end - begin) * 1000,
+            (compute_end - scatter_end) * 1000, (gather_end - compute_end) * 1000);
+    }
+    free(rows);
+    free(starts);
+    free(counts);
+    free(displs);
+    free(local);
+    free(local_out);
+    free(send_n);
+    free(recv_n);
+    free(send_d);
+    free(recv_d);
+    free(requests);
+    free(incoming);
+    free(halo_rows);
+    free(halo_values);
+    free(response_n);
+    free(response_d);
+    free(halo_n);
+    free(halo_d);
+    free(responses);
+    image_free(&clean);
+    image_free(&full);
+    image_free(&output);
+    MPI_Finalize();
+    return status;
+}
